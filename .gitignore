@@ -1,0 +1,44 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+.envrc
+*.local
+.aws/
+.ssh/
+secrets/
+credentials/
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+id_rsa*
+id_ed25519*
+.npmrc
+.netrc
+.pypirc
+# Dependencies and build outputs
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+# Test and tooling outputs
+coverage/
+.coverage
+.coverage.*
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.vite/
+*.log
+# Local editor and OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
