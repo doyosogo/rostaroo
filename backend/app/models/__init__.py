@@ -1,1 +1,3 @@
-"""SQLAlchemy models will be registered here as they are added."""
+from app.models.accounts import AuthSession, Membership, Organisation, User
+
+__all__ = ["AuthSession", "Membership", "Organisation", "User"]

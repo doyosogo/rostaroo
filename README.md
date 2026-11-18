@@ -2,11 +2,11 @@
 
 Rostaroo is a workforce management application for Australian hospitality, starting with cafés, restaurants and small businesses in Adelaide, South Australia. Owners and managers will be able to organise their teams and publish weekly rosters. Employees will be able to see upcoming shifts and manage their availability and requests.
 
-## Milestone 01 · Project foundation
+## Milestone 02 · Owner accounts and organisations
 
-The frontend presents a welcome screen and development status. The FastAPI backend provides a database-independent health endpoint. SQLAlchemy and Alembic are configured for future schema changes, and Docker Compose defines a local PostgreSQL service.
+Owners can register, log in and create an organisation. Rostaroo restores valid sessions on refresh, sends accounts without an organisation to onboarding and shows members their organisation dashboard. Logout revokes the browser's session. The health endpoint still runs without a database connection.
 
-The planned MVP includes organisation and employee management, weekly roster creation and publication, upcoming shifts, weekly availability, leave and shift swap requests, manager approvals and declines, and checks for overlapping shifts and staffing conflicts. Sign-in and all workforce features are future work.
+Employee management, invitations, weekly rosters, upcoming shifts, availability, leave, shift swaps, staffing checks and payroll are outside this milestone.
 
 ## Stack and layout
 
@@ -24,15 +24,15 @@ rostaroo/
 ├── .env.example
 ├── compose.yaml
 ├── frontend/
-│   └── src/                 # Welcome screen, styles and component test
+│   └── src/                 # Owner workflows, API client, styles and tests
 └── backend/
     ├── app/
     │   ├── api/             # HTTP routes
     │   ├── core/            # Environment settings
     │   ├── db/              # Database URL and SQLAlchemy base
-    │   ├── models/          # Reserved for future database models
-    │   └── services/        # Reserved for future business logic
-    ├── migrations/          # Alembic environment and future revisions
+    │   ├── models/          # User, organisation, membership and session models
+    │   └── services/        # Authentication and token handling
+    ├── migrations/          # Alembic environment and schema revisions
     └── tests/               # API tests
 ```
 
@@ -55,7 +55,7 @@ cd frontend
 npm run dev
 ```
 
-Open http://127.0.0.1:5173 to see the welcome screen. The dev server uses a fixed port so it stays aligned with the API's default CORS origins.
+Open http://127.0.0.1:5173 to open the owner registration and login flows. The dev server uses a fixed port so it stays aligned with the API's default CORS origins.
 
 ### Run the API
 
@@ -72,7 +72,7 @@ From another terminal:
 curl --fail --silent --show-error http://127.0.0.1:8000/api/health
 ```
 
-Expected response is `{"status":"ok"}`. Interactive API docs are at http://127.0.0.1:8000/docs. The health route and its tests run without PostgreSQL or a local environment file.
+Expected response is `{"status":"ok"}`. Interactive API docs are at http://127.0.0.1:8000/docs. The health route and its tests run without PostgreSQL or a local environment file. To use registration, login and organisations, start PostgreSQL and apply the migrations first.
 
 ### Configure and run PostgreSQL
 
@@ -83,6 +83,7 @@ cp -n .env.example .env
 docker compose config --quiet
 docker compose up -d --wait db
 docker compose ps db
+(cd backend && .venv/bin/alembic upgrade head && .venv/bin/alembic current)
 ```
 
 `.env` is ignored by Git. Use the example values only for local development. Compose and FastAPI both read the root file. Shell environment values take precedence in each process.
@@ -91,11 +92,14 @@ docker compose ps db
 | --- | --- |
 | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Initialise a new PostgreSQL volume and configure the backend's connection |
 | `POSTGRES_PORT` | Published localhost port, defaulting to `55432`. Change it if another project uses that port |
-| `CORS_ORIGINS` | JSON array of allowed frontend origins. Defaults to `http://127.0.0.1:5173` and `http://localhost:5173` |
+| `CORS_ORIGINS` | Exact frontend origins as a JSON array. Defaults to `["http://127.0.0.1:5173","http://localhost:5173"]` |
+| `SESSION_COOKIE_SECURE` | Defaults to `false` for local HTTP. Use `true` with HTTPS and explicitly configured HTTPS origins |
+| `SESSION_TTL_MINUTES` | Fixed session lifetime. Default `480`, allowed range `5` to `720` |
+| `VITE_API_ORIGIN` | Optional public API origin in ignored `frontend/.env.local`. Localhost defaults to port `8000` on the same hostname as the frontend. Other hosts default to same-origin API paths |
 
 The database is published on `127.0.0.1` and stores data in the `postgres_data` named volume. Compose reports health using `pg_isready`. Initialisation variables apply when the volume is first created. Editing them later requires coordinating changes with the database inside the existing volume.
 
-Use `docker compose stop db` to stop PostgreSQL and keep the data. Alembic is ready for future migrations. From `backend/`, run `.venv/bin/alembic heads` to inspect the revision history, which is empty in this milestone.
+Use `docker compose stop db` to stop PostgreSQL and keep the data. Revision `0001_accounts` creates the Milestone 02 schema. From `backend/`, run `.venv/bin/alembic check` to compare the live schema with the SQLAlchemy models. Downgrading this initial migration removes its tables and data.
 
 ### Verify the live database from Terminal 2
 
@@ -133,7 +137,41 @@ PY
 )
 ```
 
-`alembic current` checks the database's revision state without applying migrations. There is no current revision in Milestone 01.
+`alembic current` checks the database's revision state without applying migrations. Expect revision `0001_accounts (head)` when you run `alembic current` without output redirection.
+
+## Authentication and organisation access
+
+| Endpoint | Behaviour |
+| --- | --- |
+| `POST /api/auth/register` | Normalises the email, validates a 15–128-character password and creates an account with an Argon2id hash |
+| `POST /api/auth/login` | Verifies credentials and sets an opaque session cookie |
+| `GET /api/auth/me` | Returns the signed-in user's ID and email |
+| `POST /api/auth/logout` | Revokes the presented session in PostgreSQL and clears the cookie |
+| `POST /api/organisations` | Creates a business with a name, suburb and Australian state or territory, and adds the creator as owner |
+| `GET /api/organisations` | Lists organisations for the signed-in user's memberships |
+| `GET /api/organisations/{id}` | Returns organisation details and the caller's role when the caller is a member |
+
+The cookie is host-only, HttpOnly and SameSite=Lax. HTTPS mode adds Secure and uses the `__Host-` prefix. The browser holds the random token and PostgreSQL holds its SHA-256 digest and expiry. The server checks expiry on each authenticated request. A fresh login replaces the presented session, and logout revokes that session immediately for subsequent requests. The frontend uses credentialed fetch and keeps no authentication tokens in local storage. For local testing, use the same host spelling across frontend and backend.
+
+All POST routes require both a browser `Origin` exactly matching the configured allowlist and the `X-Rostaroo-CSRF: 1` header. This header causes a browser to preflight cross-origin calls. CORS only grants credentialed calls from allowed origins. The API checks both headers before mutation, including at login and registration. The header is a marker and contains no credential. TLS and a same-site frontend and API are expected for an HTTPS deployment.
+
+### Database schema
+
+- `users` stores UUIDs, unique normalised emails and Argon2id password hashes.
+- `organisations` stores UUIDs, names, suburbs and Australian state or territory codes.
+- `organisation_memberships` links users to organisations with a composite primary key and a constrained `owner`, `manager` or `employee` role.
+- `auth_sessions` links users to unique token digests and uses indexes for user and expiry lookups. PostgreSQL stores timestamps as timezone-aware instants.
+
+Onboarding locks the user row before checking whether the user already belongs to an organisation. It writes the organisation and owner membership in one transaction. Organisation lookups always filter by caller membership. A missing or inaccessible organisation returns 404. The schema supports future invitations and multiple members.
+
+### Local owner walkthrough
+
+1. Apply the migration and start the frontend and backend using the commands above.
+2. Open the frontend, create a synthetic owner account using an `example.com` address and a local test passphrase.
+3. Create a synthetic organisation with a suburb and state or territory, then confirm the dashboard shows its name.
+4. Refresh to check session restoration. Log out, then log in again and confirm the organisation is retained.
+
+Email verification, password recovery, employee invitations, rate limiting and automatic expiry-row cleanup are future work. Duplicate registration reports a conflict, which reveals that an address is registered. Keep this milestone in trusted local development. Treat the CORS origins as trusted code and keep HTTPS enabled for any non-local use.
 
 ## Tests and checks
 
@@ -156,6 +194,17 @@ cd backend
 .venv/bin/ruff check .
 .venv/bin/ruff format --check .
 ```
+
+### PostgreSQL integration tests
+
+With the development Compose service running, provision a separate empty PostgreSQL database once from the repository root. Use a dedicated name matching `rostaroo_*_test`.
+
+```sh
+docker compose exec -T db sh -c 'createdb --username "$POSTGRES_USER" --maintenance-db "$POSTGRES_DB" rostaroo_m02_test'
+(cd backend && ROSTAROO_TEST_DATABASE=rostaroo_m02_test .venv/bin/python -m pytest)
+```
+
+The tests reuse the configured local PostgreSQL host, port and role but explicitly select the test database. They reject the development database name and databases with unexpected tables. The suite applies Alembic, checks schema consistency and rolls back each test's data changes with an outer transaction. When the test database name is unset, only the tests that require PostgreSQL are skipped.
 
 ## Development dependency security note
 
