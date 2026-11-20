@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.api.schemas import MembershipRole, OrganisationInput, OrganisationView
 from app.api.security import DB, CurrentUser, require_trusted_origin
@@ -30,6 +31,16 @@ def organisation_view(organisation: Organisation, role: str) -> OrganisationView
     )
 
 
+def lock_user_for_onboarding(db: Session, user_id: UUID) -> None:
+    # Organisation creation and invitation acceptance share this membership guard.
+    db.execute(select(User.id).where(User.id == user_id).with_for_update(key_share=True))
+
+
+def require_no_membership(db: Session, user_id: UUID) -> None:
+    if db.scalar(select(Membership.user_id).where(Membership.user_id == user_id).limit(1)):
+        raise HTTPException(status_code=409, detail="You already belong to an organisation.")
+
+
 @router.get("")
 def list_organisations(user: CurrentUser, db: DB) -> list[OrganisationView]:
     rows = db.execute(membership_query(user.id).order_by(Organisation.created_at, Organisation.id))
@@ -49,10 +60,8 @@ def get_organisation(organisation_id: UUID, user: CurrentUser, db: DB) -> Organi
 
 @router.post("", status_code=201, dependencies=[Depends(require_trusted_origin)])
 def create_organisation(payload: OrganisationInput, user: CurrentUser, db: DB) -> OrganisationView:
-    # Serialise onboarding requests for this user before checking existing memberships.
-    db.execute(select(User.id).where(User.id == user.id).with_for_update())
-    if db.scalar(select(Membership.user_id).where(Membership.user_id == user.id).limit(1)):
-        raise HTTPException(status_code=409, detail="You already belong to an organisation.")
+    lock_user_for_onboarding(db, user.id)
+    require_no_membership(db, user.id)
 
     organisation = Organisation(name=payload.name, suburb=payload.suburb, state=payload.state)
     db.add(organisation)

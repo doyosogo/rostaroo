@@ -10,7 +10,7 @@ export const buttonClass =
 
 export const linkClass =
   'font-semibold text-[#244c3e] underline decoration-1 underline-offset-4'
-const fieldClass =
+export const fieldClass =
   'w-full rounded-xl border border-[#91a797] bg-white px-3 py-2.5 font-normal'
 
 export function errorMessage(error: unknown) {
@@ -94,7 +94,7 @@ export function AuthForm({
   return (
     <FormPanel
       title={
-        isRegistration ? 'Create your owner account' : 'Log in to Rostaroo'
+        isRegistration ? 'Create your Rostaroo account' : 'Log in to Rostaroo'
       }
     >
       <form
@@ -153,7 +153,7 @@ export function AuthForm({
       >
         {isRegistration
           ? 'Already have an account? Log in'
-          : 'Create an owner account'}
+          : 'Create an account'}
       </button>
     </FormPanel>
   )

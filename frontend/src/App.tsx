@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api, ApiError } from './api'
+import { JoinOrganisation, OrganisationDashboard } from './Team'
 import type { Organisation } from './api'
 import {
   AuthForm,
@@ -53,9 +54,17 @@ export default function App() {
     setAttempt((current) => current + 1)
   }
 
-  function returnToLogin() {
+  const returnToLogin = useCallback(() => {
     setPage('login')
     setSession({ status: 'guest' })
+  }, [])
+
+  function showOrganisation(organisation: Organisation) {
+    setSession((current) =>
+      current.status === 'authenticated'
+        ? { status: 'authenticated', organisation }
+        : current,
+    )
   }
 
   async function logout() {
@@ -131,7 +140,7 @@ export default function App() {
                 className={buttonClass}
                 onClick={() => setPage('register')}
               >
-                Create an owner account
+                Create an account
               </button>
               <button className={linkClass} onClick={() => setPage('login')}>
                 Log in
@@ -149,32 +158,22 @@ export default function App() {
         )}
         {session.status === 'authenticated' &&
           (session.organisation ? (
-            <section className="max-w-3xl rounded-3xl border border-[#d7e1d6] bg-[#eef3e9] p-6 sm:p-12">
-              <p className="mb-3 font-semibold capitalize text-[#40564c]">
-                {session.organisation.role} dashboard
-              </p>
-              <h1 className="break-words font-serif text-4xl tracking-tight sm:text-6xl">
-                {session.organisation.name}
-              </h1>
-              <p className="mt-4 text-[#40564c]">
-                {session.organisation.suburb}, {session.organisation.state}
-              </p>
-              <p className="mt-8 border-t border-[#cbd8cc] pt-5">
-                Employee management and rostering are coming in later
-                milestones.
-              </p>
-            </section>
-          ) : (
-            <OrganisationForm
-              onCreated={(organisation) =>
-                setSession((current) =>
-                  current.status === 'authenticated'
-                    ? { status: 'authenticated', organisation }
-                    : current,
-                )
-              }
+            <OrganisationDashboard
+              key={session.organisation.id}
+              organisation={session.organisation}
               onExpired={returnToLogin}
             />
+          ) : (
+            <div className="grid items-start gap-6 md:grid-cols-2">
+              <OrganisationForm
+                onCreated={showOrganisation}
+                onExpired={returnToLogin}
+              />
+              <JoinOrganisation
+                onJoined={showOrganisation}
+                onExpired={returnToLogin}
+              />
+            </div>
           ))}
       </main>
 

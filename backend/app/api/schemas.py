@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -19,8 +20,12 @@ def normalised_email(value: object) -> object:
     return value.strip().lower() if isinstance(value, str) else value
 
 
+NormalisedEmail = Annotated[EmailStr, BeforeValidator(normalised_email), Field(max_length=254)]
+InvitationRole = Literal["manager", "employee"]
+
+
 class LoginInput(BaseModel):
-    email: Annotated[EmailStr, BeforeValidator(normalised_email), Field(max_length=254)]
+    email: NormalisedEmail
     password: Annotated[SecretStr, Field(min_length=1, max_length=128)]
 
 
@@ -44,3 +49,29 @@ class OrganisationInput(BaseModel):
 class OrganisationView(OrganisationInput):
     id: UUID
     role: MembershipRole
+
+
+class TeamMemberView(UserView):
+    role: MembershipRole
+
+
+class InvitationInput(BaseModel):
+    email: NormalisedEmail
+    role: InvitationRole
+
+
+class InvitationView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    invited_email: str
+    invited_role: InvitationRole
+    expires_at: datetime
+
+
+class InvitationCreated(InvitationView):
+    code: str
+
+
+class InvitationAcceptance(BaseModel):
+    code: Annotated[SecretStr, Field(max_length=128)]

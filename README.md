@@ -2,11 +2,11 @@
 
 Rostaroo is a workforce management application for Australian hospitality, starting with cafés, restaurants and small businesses in Adelaide, South Australia. Owners and managers will be able to organise their teams and publish weekly rosters. Employees will be able to see upcoming shifts and manage their availability and requests.
 
-## Milestone 02 · Owner accounts and organisations
+## Milestone 03 · Employee invitations and team management
 
-Owners can register, log in and create an organisation. Rostaroo restores valid sessions on refresh, sends accounts without an organisation to onboarding and shows members their organisation dashboard. Logout revokes the browser's session. The health endpoint still runs without a database connection.
+Owners can register, create an organisation and manage their team. Owners and managers can see the team directory and issue or revoke invitations within their permissions. Invited employees and managers can sign in with the invited email, accept a one-time code and see their organisation membership. The health endpoint still runs without PostgreSQL.
 
-Employee management, invitations, weekly rosters, upcoming shifts, availability, leave, shift swaps, staffing checks and payroll are outside this milestone.
+Weekly rosters, upcoming shifts, availability, leave, shift swaps, staffing checks, payroll, time tracking and staff removal are future work.
 
 ## Stack and layout
 
@@ -24,13 +24,13 @@ rostaroo/
 ├── .env.example
 ├── compose.yaml
 ├── frontend/
-│   └── src/                 # Owner workflows, API client, styles and tests
+│   └── src/                 # Account and team workflows, API client, styles and tests
 └── backend/
     ├── app/
     │   ├── api/             # HTTP routes
     │   ├── core/            # Environment settings
     │   ├── db/              # Database URL and SQLAlchemy base
-    │   ├── models/          # User, organisation, membership and session models
+    │   ├── models/          # Account, membership and invitation models
     │   └── services/        # Authentication and token handling
     ├── migrations/          # Alembic environment and schema revisions
     └── tests/               # API tests
@@ -55,7 +55,7 @@ cd frontend
 npm run dev
 ```
 
-Open http://127.0.0.1:5173 to open the owner registration and login flows. The dev server uses a fixed port so it stays aligned with the API's default CORS origins.
+Open http://127.0.0.1:5173 to register or log in. The dev server uses a fixed port so it stays aligned with the API's default CORS origins.
 
 ### Run the API
 
@@ -99,7 +99,7 @@ docker compose ps db
 
 The database is published on `127.0.0.1` and stores data in the `postgres_data` named volume. Compose reports health using `pg_isready`. Initialisation variables apply when the volume is first created. Editing them later requires coordinating changes with the database inside the existing volume.
 
-Use `docker compose stop db` to stop PostgreSQL and keep the data. Revision `0001_accounts` creates the Milestone 02 schema. From `backend/`, run `.venv/bin/alembic check` to compare the live schema with the SQLAlchemy models. Downgrading this initial migration removes its tables and data.
+Use `docker compose stop db` to stop PostgreSQL and keep the data. Revision `0001_accounts` creates the account schema. Revision `0002_invitations` adds the invitations table and preserves existing accounts and memberships. Use `alembic upgrade head` to apply pending revisions. From `backend/`, run `.venv/bin/alembic check` to compare the live schema with the SQLAlchemy models. Downgrading either revision removes the tables and data that revision added.
 
 ### Verify the live database from Terminal 2
 
@@ -137,7 +137,7 @@ PY
 )
 ```
 
-`alembic current` checks the database's revision state without applying migrations. Expect revision `0001_accounts (head)` when you run `alembic current` without output redirection.
+`alembic current` checks the database's revision state without applying migrations. Expect revision `0002_invitations (head)` when you run `alembic current` without output redirection.
 
 ## Authentication and organisation access
 
@@ -160,18 +160,44 @@ All POST routes require both a browser `Origin` exactly matching the configured 
 - `users` stores UUIDs, unique normalised emails and Argon2id password hashes.
 - `organisations` stores UUIDs, names, suburbs and Australian state or territory codes.
 - `organisation_memberships` links users to organisations with a composite primary key and a constrained `owner`, `manager` or `employee` role.
-- `auth_sessions` links users to unique token digests and uses indexes for user and expiry lookups. PostgreSQL stores timestamps as timezone-aware instants.
+- `auth_sessions` links users to unique token digests and uses indexes for user and expiry lookups.
+- `organisation_invitations` links an organisation and creator to an invited email and role. It stores a unique code digest, expiry and acceptance or revocation timestamp.
 
-Onboarding locks the user row before checking whether the user already belongs to an organisation. It writes the organisation and owner membership in one transaction. Organisation lookups always filter by caller membership. A missing or inaccessible organisation returns 404. The schema supports future invitations and multiple members.
+PostgreSQL stores timestamps as timezone-aware instants.
 
-### Local owner walkthrough
+Onboarding locks the user row before checking whether the user already belongs to an organisation. It writes the organisation and owner membership in one transaction. Organisation lookups always filter by caller membership. A missing or inaccessible organisation returns 404. The schema supports multiple members per organisation. Self-service creation and invitation acceptance allow one organisation per user and use the same user-row lock.
 
-1. Apply the migration and start the frontend and backend using the commands above.
-2. Open the frontend, create a synthetic owner account using an `example.com` address and a local test passphrase.
-3. Create a synthetic organisation with a suburb and state or territory, then confirm the dashboard shows its name.
-4. Refresh to check session restoration. Log out, then log in again and confirm the organisation is retained.
+## Team management and invitations
 
-Email verification, password recovery, employee invitations, rate limiting and automatic expiry-row cleanup are future work. Duplicate registration reports a conflict, which reveals that an address is registered. Keep this milestone in trusted local development. Treat the CORS origins as trusted code and keep HTTPS enabled for any non-local use.
+| Role | Permissions |
+| --- | --- |
+| Owner | See all team members. Create, list and revoke pending employee or manager invitations. |
+| Manager | See all team members. Create, list and revoke pending employee invitations for the organisation. |
+| Employee | See their own organisation membership. |
+
+| Endpoint | Behaviour |
+| --- | --- |
+| `GET /api/organisations/{id}/members` | List member emails and roles for owners and managers |
+| `POST /api/organisations/{id}/invitations` | Create an invitation from an email and role. The response contains its usable code once |
+| `GET /api/organisations/{id}/invitations` | List pending invitations permitted for the caller's role, with expiry dates |
+| `POST /api/organisations/{id}/invitations/{invitation_id}/revoke` | Revoke a permitted pending invitation |
+| `POST /api/invitations/accept` | Consume a code supplied in the JSON body. The signed-in email must match the invitee |
+| `GET /api/organisations` | Retrieve the caller's memberships and current roles |
+
+The server checks membership and role for the requested organisation. An invitation is pending until it is accepted, revoked or reaches its seven-day expiry. An organisation can have one pending invitation per normalised email and cannot invite an existing member. Separate organisations can invite the same address, but the first accepted membership prevents a second join. Acceptance adds the membership and records the redemption in one transaction.
+
+Rostaroo uses 256 random bits for each code and stores only its SHA-256 digest. Codes travel in JSON and the creation response is marked `Cache-Control: no-store`. Codes are shown in the creation view and stay in memory until that view closes or the code is replaced or revoked. Copying places the code on the device clipboard. If a code is lost before it is shared, revoke the pending invitation and issue a fresh one.
+
+### Local invitation walkthrough
+
+1. Apply the migration and start the frontend and API using the commands above.
+2. Register with a synthetic `example.com` account and create an organisation.
+3. Open **Manage team**, enter a second synthetic email, choose **Employee**, and select **Create invitation**. Copy the code.
+4. Open the frontend in another browser profile or private window. Register or log in using the invited email and enter the code under **Join a team**.
+5. Verify that the employee sees the organisation and their own role. In the owner window, reopen **Manage team** to refresh the directory and check that the employee appears and the invitation is gone.
+6. To test revocation, issue an invitation to another synthetic email, revoke it and try to accept its code using that account.
+
+There is no email delivery. Share codes privately with the intended recipient. Matching the registered address and requiring the code reduces unauthorised redemption, while the address itself remains unverified. Keep this milestone in trusted local development. Email verification, password recovery, rate limiting and automatic cleanup of expired invitation or session rows are future work. Duplicate registration reveals that an address is registered. Role changes, owner transfers and member removal are outside this milestone.
 
 ## Tests and checks
 
@@ -197,17 +223,15 @@ cd backend
 
 ### PostgreSQL integration tests
 
-With the development Compose service running, provision a separate empty PostgreSQL database once from the repository root. Use a dedicated name matching `rostaroo_*_test`.
+With the development Compose service running, provision a separate empty PostgreSQL database once from the repository root. If you already have the dedicated database from Milestone 02, reuse it and skip `createdb`. Use a dedicated name matching `rostaroo_*_test`.
 
 ```sh
 docker compose exec -T db sh -c 'createdb --username "$POSTGRES_USER" --maintenance-db "$POSTGRES_DB" rostaroo_m02_test'
 (cd backend && ROSTAROO_TEST_DATABASE=rostaroo_m02_test .venv/bin/python -m pytest)
 ```
 
-The tests reuse the configured local PostgreSQL host, port and role but explicitly select the test database. They reject the development database name and databases with unexpected tables. The suite applies Alembic, checks schema consistency and rolls back each test's data changes with an outer transaction. When the test database name is unset, only the tests that require PostgreSQL are skipped.
+The tests reuse the configured local PostgreSQL host, port and role but explicitly select the test database. They reject the development database name and databases with unexpected tables. The suite applies Alembic and checks schema consistency. Most tests roll back their writes with an outer transaction. The concurrency test uses independent transactions and removes only the synthetic rows it creates. When the test database name is unset, only the tests that require PostgreSQL are skipped.
 
 ## Development dependency security note
 
-As of 18 November 2026, the full frontend npm audit reports 11 high-severity entries from one advisory affecting `picomatch@4.0.7`. Vite and Vitest pull it in directly and through `tinyglobby`. The TypeScript ESLint parser also reaches it through `typescript-estree` and `tinyglobby`. The package is development-only in this repository, and `npm audit --omit=dev` reported zero findings. The latest published version is affected and the advisory lists no patch. [GitHub advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf)
-
-The vulnerability can hang a Node.js tooling process that processes a malicious glob pattern. The residual risk is acceptable for trusted local development because Vite binds to loopback and the current project gives users no way to supply glob patterns to its tooling. Keep this finding open, continue running the full `npm audit` from `frontend/`, and update the lockfile and rerun the frontend checks when a compatible patch is available. Reassess before exposing the development tooling or processing untrusted glob patterns.
+Earlier milestone audits reported 11 high-severity entries tracing to the development dependency `picomatch@4.0.7`, which Vite, Vitest and TypeScript ESLint use. GitHub withdrew that advisory on 18 November 2026. On 20 November, both the full `npm audit` and `npm audit --omit=dev` reported zero findings with the existing lockfile. The advisory link is kept for the milestone record. Continue running the full audit from `frontend/`. [Withdrawn GitHub advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf)

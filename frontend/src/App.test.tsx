@@ -61,7 +61,7 @@ it('validates registration email and password before sending a request', async (
   vi.stubGlobal('fetch', fetch)
   render(<App />)
   fireEvent.click(
-    await screen.findByRole('button', { name: 'Create an owner account' }),
+    await screen.findByRole('button', { name: 'Create an account' }),
   )
   fireEvent.click(screen.getByRole('button', { name: 'Create account' }))
   expect(screen.getByRole('alert').textContent).toBe(
@@ -181,7 +181,7 @@ it('registers, logs in and loads onboarding for the new account', async () => {
   vi.stubGlobal('fetch', fetch)
   render(<App />)
   fireEvent.click(
-    await screen.findByRole('button', { name: 'Create an owner account' }),
+    await screen.findByRole('button', { name: 'Create an account' }),
   )
   enter('Email address', 'owner@example.com')
   enter('Password', 'synthetic registration passphrase')

@@ -74,3 +74,42 @@ export const api = {
   createOrganisation: (body: OrganisationInput) =>
     request<Organisation>('/organisations', { post: true, body }),
 }
+
+export type InvitationRole = 'manager' | 'employee'
+
+export type TeamMember = {
+  id: string
+  email: string
+  role: Organisation['role']
+}
+
+export type Invitation = {
+  id: string
+  invited_email: string
+  invited_role: InvitationRole
+  expires_at: string
+}
+
+export type CreatedInvitation = Invitation & { code: string }
+
+export const teamApi = {
+  members: (id: string, signal?: AbortSignal) =>
+    request<TeamMember[]>(`/organisations/${id}/members`, { signal }),
+  invitations: (id: string, signal?: AbortSignal) =>
+    request<Invitation[]>(`/organisations/${id}/invitations`, { signal }),
+  invite: (id: string, body: { email: string; role: InvitationRole }) =>
+    request<CreatedInvitation>(`/organisations/${id}/invitations`, {
+      post: true,
+      body,
+    }),
+  revoke: (organisationId: string, invitationId: string) =>
+    request<void>(
+      `/organisations/${organisationId}/invitations/${invitationId}/revoke`,
+      { post: true },
+    ),
+  accept: (code: string) =>
+    request<Organisation>('/invitations/accept', {
+      post: true,
+      body: { code },
+    }),
+}

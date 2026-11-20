@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.auth import router as auth_router
 from app.api.health import router as health_router
+from app.api.invitations import router as invitations_router
 from app.api.organisations import router as organisations_router
 from app.api.security import CSRF_HEADER
 from app.core.config import get_settings
@@ -20,6 +21,7 @@ app.add_middleware(
 app.include_router(health_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(organisations_router, prefix="/api")
+app.include_router(invitations_router, prefix="/api")
 
 
 @app.exception_handler(RequestValidationError)
@@ -31,6 +33,6 @@ async def invalid_input(_request: Request, _error: RequestValidationError) -> JS
 @app.middleware("http")
 async def prevent_private_response_caching(request: Request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith(("/api/auth/", "/api/organisations")):
+    if request.url.path.startswith(("/api/auth/", "/api/organisations", "/api/invitations")):
         response.headers["Cache-Control"] = "no-store"
     return response
